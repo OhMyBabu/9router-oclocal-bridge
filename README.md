@@ -179,6 +179,31 @@ The serve process deliberately runs with `HOME=<repo>/home` and
 which bleeds the operator persona into every bridged answer and inflates
 prompt tokens (~25k → ~1.5k). Keep it isolated.
 
+## Protocol shape through the router — read this before wiring a client
+
+Measured against the public endpoint (`https://aethink.com/v1`):
+
+| mode | content-type | body shape | strict OpenAI SDK |
+|---|---|---|---|
+| `stream: true` | `text/event-stream` | proper `data: {…}` frames + `data: [DONE]` | **works** |
+| non-stream | `text/event-stream` | `{…}data: [DONE]\n\n` | **fails to parse** |
+
+9Router normalises single-shot JSON into an SSE body — its own
+`src/lib/keyPolicy.js` carries the comment *"9Router answers single-shot JSON
+with an SSE content-type"* and `extractUsage()` explicitly scans for
+"JSON followed by `data: [DONE]` SSE trailers". So this is upstream design, not
+a bridge defect, and it cannot be fixed from the provider side.
+
+Practical consequences:
+
+- **Use `stream: true`** if the client goes through the router. Verified: 4
+  frames, `finish: "stop"`, `[DONE]` sentinel.
+- For a strict non-stream JSON client, point it at the bridge directly
+  (`http://<bridge-host>:8899/v1`) which answers clean
+  `Content-Type: application/json`.
+- Verify any client with `test-all-models.py` (runs all 10 models, both modes,
+  strict + lenient parsing) before handing it out.
+
 ## Caveats
 
 - Free-tier upstreams are flaky: intermittent `429 "Endpoint is unavailable"`.

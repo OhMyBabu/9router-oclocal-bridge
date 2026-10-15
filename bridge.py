@@ -440,7 +440,7 @@ class Handler(BaseHTTPRequestHandler):
                 if len(txt) > sent:
                     delta = txt[sent:]
                     sent = len(txt)
-                    self._write_chunk(json.dumps({
+                    self._write_chunk(b"data: " + json.dumps({
                         "id": cmpl_id,
                         "object": "chat.completion.chunk",
                         "created": created,
@@ -456,7 +456,7 @@ class Handler(BaseHTTPRequestHandler):
                 last_ping = time.time()
             time.sleep(POLL_INTERVAL)
 
-        self._write_chunk(json.dumps({
+        self._write_chunk(b"data: " + json.dumps({
             "id": cmpl_id,
             "object": "chat.completion.chunk",
             "created": created,
