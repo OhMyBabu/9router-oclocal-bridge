@@ -36,6 +36,30 @@ bridge rides on it instead of fighting the gate.
 | `diag-9router.sh` | auth / node / model-discovery diagnostics on node2 |
 | `verify.sh` | full local verification, exit code reflects pass/fail |
 
+## How another agent uses it
+
+The router container binds `127.0.0.1:20128` only, but node2's nginx fronts it on
+**443**, so this works from anywhere:
+
+```
+base_url: https://43.167.161.194/v1
+api_key:  <9Router key, minted in the 9Router UI or POST /api/keys>
+model:    oclocal/<model>          e.g. oclocal/step-5-preview-free
+```
+
+```bash
+curl -sk https://43.167.161.194/v1/chat/completions \
+  -H "Authorization: Bearer $ROUTER_KEY" -H 'Content-Type: application/json' \
+  -d '{"model":"oclocal/nemotron-3.5-lightning-free",
+       "messages":[{"role":"user","content":"hello"}]}'
+```
+
+`/v1/models` on the router lists all 10 as `oclocal/<model>`. Streaming works
+(`"stream": true`).
+
+Verified from a third-party box against the public endpoint: `/v1/models` -> 10
+`oclocal/*` models, chat completion -> HTTP 200, `stream: true` -> deltas + `[DONE]`.
+
 ## Models
 
 10 free models, discovered live from `GET /api/model` on the local serve and
