@@ -103,6 +103,43 @@ nemotron-3.5-lightning-free  space-bunny-free  step-5-preview-free
 
 The router sees them as `oclocal/<model>` (node prefix + model id).
 
+## Limits
+
+| layer | limit | evidence |
+|---|---|---|
+| 9Router per-key policy | **none** | `ltx-agents-oclocal` has `allowedModels:[]` and every quota field `null` |
+| bridge | **none** | no token/request accounting in `bridge.py` |
+| opencode free tier | **unpublished, per-IP, per-model** | see below |
+
+### Upstream reality (SOLID findings)
+
+- Official docs: the free models are *"available on OpenCode for a limited time"*
+  and the offer *"is not a promise of unlimited or permanent free inference."*
+- Independent trackers record a **per-IP** limit and roughly **10 parallel
+  connections per IP** on at least one free model (`space-bunny-free`).
+- Measured here: 12 sequential + 20 concurrent + 50 concurrent completions all
+  returned 200 (50 concurrent finished in 30s), so the ceiling is above that.
+- The recurring `429 "Endpoint is unavailable"` is best read as the per-IP /
+  per-model limit firing (or that endpoint being busy), not as an open outage —
+  a sibling free model usually answers immediately. That is exactly why
+  `BRIDGE_FALLBACK` exists.
+
+### Why chatting in the TUI feels unlimited
+
+It is the same free tier — a human session just never approaches the ceiling:
+one request per typing turn, spread over minutes, with prompt caching, and the
+model is often swapped between sessions. An agent fleet hammering the bridge is
+a different traffic shape, so it will hit the upstream ceiling long before you
+would.
+
+### If you need a hard ceiling
+
+The 9Router policy system already supports it (per key): `allowedModels`,
+`maxInputTokens`, `maxOutputTokens`, `dailyTokenLimit`, `rpmLimit`,
+`totalInputTokenLimit`, `totalTokenLimit` — the last two are lifetime and never
+reset. Set them via `PATCH /api/keys/<id>` or the endpoint page. Leaving them
+null means unlimited, which is what this key currently is.
+
 ## Deploy
 
 ```bash
