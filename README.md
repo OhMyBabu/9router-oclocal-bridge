@@ -42,10 +42,40 @@ The router container binds `127.0.0.1:20128` only, but node2's nginx fronts it o
 **443**, so this works from anywhere:
 
 ```
-base_url: https://43.167.161.194/v1
-api_key:  <9Router key, minted in the 9Router UI or POST /api/keys>
+base_url: https://aethink.com/v1
+api_key:  <9Router key>            (see "Where the key lives" below)
 model:    oclocal/<model>          e.g. oclocal/step-5-preview-free
 ```
+
+`aethink.com` is the nginx vhost on node2 (`43-167-161-194.sslip.io` is the
+IP-based fallback). Plain `https://43.167.161.194/v1` also answers but only via
+the default vhost — prefer the domain.
+
+## Where the key lives
+
+**UI** (easiest): open `https://aethink.com`, log in with the router password,
+then go to **`/dashboard/endpoint`**. The *API Keys* section lists every key;
+each row has an eye toggle (`Show key` / `Hide key`) plus a copy button. The same
+page prints the base URL to paste into a client.
+
+**API** (keys are returned once at creation, and viewable any time in the UI):
+
+```bash
+# login
+curl -sk -c cj.txt -X POST http://127.0.0.1:20128/api/auth/login \
+  -H 'Content-Type: application/json' -d '{"password":"<router password>"}'
+
+# mint
+curl -sk -b cj.txt -X POST http://127.0.0.1:20128/api/keys \
+  -H 'Content-Type: application/json' -d '{"name":"my-agent"}'
+
+# list / delete
+curl -sk -b cj.txt http://127.0.0.1:20128/api/keys
+curl -sk -b cj.txt -X DELETE http://127.0.0.1:20128/api/keys/<id>
+```
+
+Note the router container is loopback-bound, so these calls must be issued **on
+node2** (ssh in, or drive them over ssh as `wire-9router.py` does).
 
 ```bash
 curl -sk https://43.167.161.194/v1/chat/completions \
