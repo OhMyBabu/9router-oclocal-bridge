@@ -37,6 +37,19 @@ FALLBACK_MODELS = [
 ]
 PROMPT_TIMEOUT = float(os.environ.get("BRIDGE_TIMEOUT", "240"))
 POLL_INTERVAL = 0.35
+RETRIES = int(os.environ.get("BRIDGE_RETRIES", "3"))
+RETRY_BACKOFF = float(os.environ.get("BRIDGE_RETRY_BACKOFF", "2.0"))
+# tried in order when a model's upstream endpoint answers 429 / unavailable
+FALLBACK_CHAIN = [
+    m.strip()
+    for m in os.environ.get(
+        "BRIDGE_FALLBACK",
+        "step-5-preview-free,nemotron-3.5-lightning-free,nemotron-3-ultra-free,"
+        "mimo-v2.6-flash-free,deepseek-v4.1-flash-free,longcat-2.5-preview-free,"
+        "muse-spark-1.3-contributor-free,space-bunny-free,cat-jam-free,big-pickle",
+    ).split(",")
+    if m.strip()
+]
 
 _lock = threading.Lock()
 _models_cache = {"at": 0.0, "models": []}
@@ -285,6 +298,14 @@ class Handler(BaseHTTPRequestHandler):
         return self._json(404, {"error": {"message": f"no route {path}", "type": "not_found"}})
 
     # ---------- core ----------
+    def _chain(self, model):
+        """Requested model first, then the fallback chain (deduped)."""
+        out = [model]
+        for m in FALLBACK_CHAIN:
+            if m not in out:
+                out.append(m)
+        return out
+
     def chat(self, payload):
         model = normalize_model(payload.get("model"))
         stream = bool(payload.get("stream"))
@@ -295,11 +316,45 @@ class Handler(BaseHTTPRequestHandler):
         if not text:
             return self._json(400, {"error": {"message": "no messages", "type": "invalid_request"}})
 
-        try:
-            sid = create_session(model, agent if isinstance(agent, str) and not agent.startswith("usr") else None)
-            uid = send_prompt(sid, text)
-        except Exception as e:
-            return self._json(502, {"error": {"message": str(e), "type": "upstream_error"}})
+        agent = agent if isinstance(agent, str) and not agent.startswith("usr") else None
+        chain = self._chain(model)
+
+        # ---- acquire a live session: retry across models on upstream 429/unavailable
+        attempts = []
+        sid = uid = None
+        served = model
+        for mi, cand in enumerate(chain):
+            for attempt in range(1, RETRIES + 1):
+                try:
+                    sid = create_session(cand, agent)
+                    uid = send_prompt(sid, text)
+                    served = cand
+                    break
+                except Exception as e:
+                    msg = str(e)
+                    transient = any(
+                        k in msg for k in ("429", "unavailable", "Unavailable", "timed out", "Timeout")
+                    )
+                    attempts.append(f"{cand}#{attempt}:{msg[-120:]}")
+                    if not transient or attempt == RETRIES:
+                        break
+                    time.sleep(RETRY_BACKOFF * attempt + (time.time() % 1))
+            if uid:
+                break
+            # whole chain exhausted for this candidate -> next model
+            if mi + 1 < len(chain):
+                continue
+
+        if not uid:
+            return self._json(
+                502,
+                {
+                    "error": {
+                        "message": "all upstream models failed; attempts: " + " | ".join(attempts[-6:]),
+                        "type": "upstream_error",
+                    }
+                },
+            )
 
         deadline = time.time() + PROMPT_TIMEOUT
         cmpl_id = "chatcmpl-" + uuid.uuid4().hex[:24]
@@ -313,16 +368,42 @@ class Handler(BaseHTTPRequestHandler):
                     {"error": {"message": f"no completion within {PROMPT_TIMEOUT}s", "type": "timeout"}},
                 )
             if m.get("error"):
-                return self._json(
-                    502, {"error": {"message": json.dumps(m.get("error"))[:800], "type": "upstream_error"}}
-                )
+                # upstream died mid-flight -> inline retry on the remaining chain
+                err = json.dumps(m.get("error"))[:800]
+                idx = chain.index(served) if served in chain else 0
+                for cand in chain[idx + 1:]:
+                    try:
+                        rsid = create_session(cand, agent)
+                        ruid = send_prompt(rsid, text)
+                    except Exception:
+                        continue
+                    rm = wait_assistant(rsid, ruid, time.time() + PROMPT_TIMEOUT)
+                    if rm and not rm.get("error"):
+                        return self._json(
+                            200,
+                            {
+                                "id": cmpl_id,
+                                "object": "chat.completion",
+                                "created": created,
+                                "model": cand,
+                                "choices": [
+                                    {
+                                        "index": 0,
+                                        "message": {"role": "assistant", "content": assistant_text(rm)},
+                                        "finish_reason": "stop",
+                                    }
+                                ],
+                                "usage": usage_of(rm),
+                            },
+                        )
+                return self._json(502, {"error": {"message": err, "type": "upstream_error"}})
             return self._json(
                 200,
                 {
                     "id": cmpl_id,
                     "object": "chat.completion",
                     "created": created,
-                    "model": model,
+                    "model": served,
                     "choices": [
                         {
                             "index": 0,
@@ -363,7 +444,7 @@ class Handler(BaseHTTPRequestHandler):
                         "id": cmpl_id,
                         "object": "chat.completion.chunk",
                         "created": created,
-                        "model": model,
+                        "model": served,
                         "choices": [{"index": 0, "delta": {"content": delta}, "finish_reason": None}],
                     }).encode() + b"\n\n")
                 final_usage = usage_of(cur)
@@ -379,7 +460,7 @@ class Handler(BaseHTTPRequestHandler):
             "id": cmpl_id,
             "object": "chat.completion.chunk",
             "created": created,
-            "model": model,
+            "model": served,
             "choices": [{"index": 0, "delta": {}, "finish_reason": finish_reason}],
             "usage": final_usage,
         }).encode() + b"\n\n")

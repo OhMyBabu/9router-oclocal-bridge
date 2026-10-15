@@ -71,6 +71,14 @@ stdin — secrets are never echoed into the transcript or the repo.
 | `BRIDGE_TOKEN` | from `.bridge-token` | required bearer token; empty = open relay |
 | `BRIDGE_DEFAULT_MODEL` | `step-5-preview-free` | used when a request omits `model` |
 | `BRIDGE_TIMEOUT` | `240` | seconds to wait for a completion |
+| `BRIDGE_RETRIES` | `3` | retries per candidate model on a transient upstream error |
+| `BRIDGE_RETRY_BACKOFF` | `2.0` | base backoff seconds between retries |
+| `BRIDGE_FALLBACK` | 10-model chain | comma-separated order tried when the requested model's endpoint is unavailable |
+
+The requested model is always tried first; on `429 / Endpoint is unavailable`
+the bridge retries it, then walks `BRIDGE_FALLBACK` until one model serves. The
+returned `model` field reflects the model that actually answered, so a router
+key request for `oclocal/x` may legitimately come back served by `y`.
 
 ## Isolation notes
 
@@ -83,8 +91,12 @@ prompt tokens (~25k → ~1.5k). Keep it isolated.
 ## Caveats
 
 - Free-tier upstreams are flaky: intermittent `429 "Endpoint is unavailable"`.
-  The bridge surfaces that as HTTP 502; retry or switch model.
+  The bridge self-heals via `BRIDGE_RETRIES` + `BRIDGE_FALLBACK` and reports the
+  model that actually served; only an all-candidates failure surfaces as HTTP 502.
 - Every completion mints a fresh opencode session (stateless by design, no
   cross-request contamination). Sessions accumulate in the serve DB.
 - `prompt_tokens` looks large because the opencode `build` agent ships its full
   tool schema in the system prompt.
+- The bridge is bound to `0.0.0.0` and is the only thing standing between the
+  internet and this box's free-tier quota — keep `BRIDGE_TOKEN` set and firewall
+  port 8899 to the router's egress if you can.
