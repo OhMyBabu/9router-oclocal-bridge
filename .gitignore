@@ -1,0 +1,7 @@
+# secrets / runtime state
+.bridge-token
+*.log
+home/
+workspace/
+__pycache__/
+*.pyc
