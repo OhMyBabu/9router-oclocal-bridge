@@ -8,10 +8,10 @@ FAIL=0
 ok(){ echo "  [ok] $1"; }
 bad(){ echo "  [FAIL] $1"; FAIL=1; }
 
-echo "=== 1. opencode serve (:4096) ==="
-if curl -s -m 8 "$BRIDGE/../4096/api/health" >/dev/null 2>&1; then :; fi
-curl -s -m 8 http://127.0.0.1:4096/api/health -o /dev/null -w '  serve health: %{http_code}\n' 2>/dev/null \
-  && ok "opencode serve reachable" || bad "opencode serve down (run ./start-serve.sh)"
+echo "=== 1. opencode serve (upstream) ==="
+UPSTREAM="${OPENCODE_URL:-http://127.0.0.1:4096}"
+curl -s -m 8 "$UPSTREAM/api/health" -o /dev/null -w '  serve health: %{http_code}\n' 2>/dev/null \
+  && ok "opencode serve reachable ($UPSTREAM)" || bad "opencode serve down at $UPSTREAM (run ./start-serve.sh)"
 
 echo "=== 2. bridge health ==="
 H=$(curl -s -m 8 "$BRIDGE/health")

@@ -1,0 +1,33 @@
+# oclocal bridge — standalone container (no 9Router involved).
+#
+#   docker compose up -d --build
+#   curl http://127.0.0.1:8899/health
+#   curl -H "Authorization: Bearer $(cat ./data/.bridge-token)" \
+#        http://127.0.0.1:8899/v1/models
+#
+# The token is auto-generated into ./data/.bridge-token on first start.
+
+services:
+  oclocal:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: oclocal
+    restart: always
+    ports:
+      - "8899:8899"
+    environment:
+      HOME: /data/home
+      OPENCODE_DISABLE_PROJECT_CONFIG: "true"
+      OPENCODE_DISABLE_AUTOUPDATE: "true"
+      OPENCODE_URL: http://127.0.0.1:8899
+      BRIDGE_HOST: 0.0.0.0
+      BRIDGE_PORT: "8899"
+    volumes:
+      - ./data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8899/health"]
+      interval: 30s
+      timeout: 8s
+      retries: 3
+      start_period: 20s
